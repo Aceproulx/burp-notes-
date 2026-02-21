@@ -28,7 +28,7 @@ public class NotesPanel extends JPanel {
         this.notesModel = new DefaultListModel<>();
         this.notesList = new JList<>(notesModel);
         notesList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        notesList.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        notesList.setFont(new Font("Segoe UI", Font.PLAIN, 14));
         notesList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 onNoteSelected();
