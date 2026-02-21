@@ -1,2 +1,0 @@
-Burp-BApp-Id: com.notesplus
-Extension-Class: com.notesplus.BurpNotesPlusExtension
