@@ -72,7 +72,7 @@ public class MarkdownEditorPanel {
         linesPanel.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() == 2 && e.getSource() == linesPanel) {
+                if (e.getClickCount() == 1 && e.getSource() == linesPanel) {
                     if (rows.isEmpty()) {
                         addRow("", true);
                     } else {
@@ -410,7 +410,7 @@ public class MarkdownEditorPanel {
 
                 @Override
                 public void mouseClicked(MouseEvent e) {
-                    if (e.getClickCount() == 2) {
+                    if (e.getClickCount() == 1) {
                         startEditing();
                     }
                 }
