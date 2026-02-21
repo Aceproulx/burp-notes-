@@ -26,6 +26,7 @@ import javax.swing.JEditorPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
+import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
 
@@ -110,7 +111,7 @@ public class MarkdownEditorPanel {
         linesPanel.removeAll();
 
         List<String> logicalLines = new ArrayList<>();
-        String[] lines = markdown.isEmpty() ? new String[]{""} : markdown.split("\n", -1);
+        String[] lines = markdown.isEmpty() ? new String[] { "" } : markdown.split("\n", -1);
 
         StringBuilder codeBlock = null;
         for (String line : lines) {
@@ -356,8 +357,11 @@ public class MarkdownEditorPanel {
         final JPanel panel;
         private String rawText;
         private final JEditorPane renderedPane;
-        private final JTextArea editField;
+        private final JTextField singleLineEditField;
+        private final JTextArea multiLineEditField;
+        private final JScrollPane multiLineScroll;
         private boolean editing = false;
+        private boolean useMultiLine = false;
 
         int rowIndex() {
             return rows.indexOf(this);
@@ -365,6 +369,7 @@ public class MarkdownEditorPanel {
 
         LineRow(String initialText) {
             this.rawText = initialText;
+            this.useMultiLine = initialText.trim().startsWith("```");
 
             panel = new JPanel(new CardLayout());
             panel.setBackground(Color.WHITE);
@@ -411,7 +416,8 @@ public class MarkdownEditorPanel {
                 }
             });
 
-            // Add keyboard shortcuts for rendered pane (Ctrl+A for select all, Ctrl+C for copy)
+            // Add keyboard shortcuts for rendered pane (Ctrl+A for select all, Ctrl+C for
+            // copy)
             renderedPane.addKeyListener(new KeyAdapter() {
                 @Override
                 public void keyPressed(KeyEvent e) {
@@ -427,67 +433,61 @@ public class MarkdownEditorPanel {
 
             updateRendered();
 
-            editField = new JTextArea(rawText);
-            editField.setLineWrap(true);
-            editField.setWrapStyleWord(true);
-            editField.setBackground(new Color(250, 250, 255));
-            editField.setForeground(new Color(50, 50, 50));
-            editField.setCaretColor(new Color(0, 100, 250));
-            editField.setFont(new Font("Consolas", Font.PLAIN, 14));
-            editField.setBorder(BorderFactory.createCompoundBorder(
+            // Single-line editor (JTextField)
+            singleLineEditField = new JTextField(rawText);
+            singleLineEditField.setBackground(new Color(250, 250, 255));
+            singleLineEditField.setForeground(new Color(50, 50, 50));
+            singleLineEditField.setCaretColor(new Color(0, 100, 250));
+            singleLineEditField.setFont(new Font("Consolas", Font.PLAIN, 14));
+            singleLineEditField.setBorder(BorderFactory.createCompoundBorder(
                     BorderFactory.createMatteBorder(0, 2, 0, 0, new Color(100, 150, 255)),
                     new EmptyBorder(3, 6, 3, 6)));
-            editField.setMargin(new java.awt.Insets(3, 6, 3, 6));
 
-            JScrollPane scrollPane = new JScrollPane(editField);
-            scrollPane.setBorder(null);
-            scrollPane.setBackground(new Color(250, 250, 255));
-            // Disable scrollbars - let content expand instead
-            scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-            scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
-            scrollPane.getViewport().setBackground(new Color(250, 250, 255));
-
-            editField.addFocusListener(new FocusAdapter() {
+            singleLineEditField.addFocusListener(new FocusAdapter() {
                 @Override
                 public void focusLost(FocusEvent e) {
                     stopEditing();
                 }
             });
 
-            editField.addKeyListener(new KeyAdapter() {
+            singleLineEditField.addKeyListener(new KeyAdapter() {
                 @Override
                 public void keyPressed(KeyEvent e) {
                     int idx = rowIndex();
-                    // Ctrl+Enter or Alt+Enter to split to new row
-                    if ((e.isControlDown() || e.isAltDown()) && e.getKeyCode() == KeyEvent.VK_ENTER) {
+                    if (e.getKeyCode() == KeyEvent.VK_ENTER) {
                         e.consume();
-                        // Split current line at cursor position
-                        String currentText = editField.getText();
-                        int caretPos = editField.getCaretPosition();
-
+                        String currentText = singleLineEditField.getText();
+                        int caretPos = singleLineEditField.getCaretPosition();
                         String beforeCursor = currentText.substring(0, caretPos);
                         String afterCursor = currentText.substring(caretPos);
 
-                        // Update current row with text before cursor
-                        editField.setText(beforeCursor);
+                        singleLineEditField.setText(beforeCursor);
                         rawText = beforeCursor;
 
-                        // Create new row with text after cursor
                         LineRow newRow = insertRowAfter(idx, afterCursor);
                         stopEditing();
                         SwingUtilities.invokeLater(() -> {
                             newRow.startEditing();
-                            newRow.editField.setCaretPosition(0);
+                            if (newRow.useMultiLine) {
+                                newRow.multiLineEditField.setCaretPosition(0);
+                            } else {
+                                newRow.singleLineEditField.setCaretPosition(0);
+                            }
                         });
                     } else if (e.getKeyCode() == KeyEvent.VK_BACK_SPACE
-                            && editField.getText().isEmpty() && idx > 0) {
+                            && singleLineEditField.getText().isEmpty() && idx > 0) {
                         e.consume();
                         int prevIdx = idx - 1;
                         String prevText = rows.get(prevIdx).getRawText();
                         stopEditing();
                         removeRow(idx);
                         rows.get(prevIdx).startEditing();
-                        rows.get(prevIdx).editField.setCaretPosition(prevText.length());
+                        LineRow prevRow = rows.get(prevIdx);
+                        if (prevRow.useMultiLine) {
+                            prevRow.multiLineEditField.setCaretPosition(prevText.length());
+                        } else {
+                            prevRow.singleLineEditField.setCaretPosition(prevText.length());
+                        }
                     } else if (e.getKeyCode() == KeyEvent.VK_ESCAPE) {
                         stopEditing();
                         e.consume();
@@ -496,16 +496,117 @@ public class MarkdownEditorPanel {
 
                 @Override
                 public void keyReleased(KeyEvent e) {
-                    rawText = editField.getText();
-                    updateEditFieldHeight();
+                    rawText = singleLineEditField.getText();
+                    if (rawText.trim().startsWith("```")) {
+                        useMultiLine = true;
+                        switchToMultiLine();
+                    }
+                    notifyContentChanged();
+                }
+            });
+
+            // Multi-line editor (JTextArea)
+            multiLineEditField = new JTextArea(rawText);
+            multiLineEditField.setLineWrap(true);
+            multiLineEditField.setWrapStyleWord(true);
+            multiLineEditField.setBackground(new Color(250, 250, 255));
+            multiLineEditField.setForeground(new Color(50, 50, 50));
+            multiLineEditField.setCaretColor(new Color(0, 100, 250));
+            multiLineEditField.setFont(new Font("Consolas", Font.PLAIN, 14));
+            multiLineEditField.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createMatteBorder(0, 2, 0, 0, new Color(100, 150, 255)),
+                    new EmptyBorder(3, 6, 3, 6)));
+
+            multiLineScroll = new JScrollPane(multiLineEditField);
+            multiLineScroll.setBorder(null);
+            multiLineScroll.setBackground(new Color(250, 250, 255));
+            multiLineScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+            multiLineScroll.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_NEVER);
+            multiLineScroll.getViewport().setBackground(new Color(250, 250, 255));
+
+            multiLineEditField.addFocusListener(new FocusAdapter() {
+                @Override
+                public void focusLost(FocusEvent e) {
+                    stopEditing();
+                }
+            });
+
+            multiLineEditField.addKeyListener(new KeyAdapter() {
+                @Override
+                public void keyPressed(KeyEvent e) {
+                    int idx = rowIndex();
+                    if ((e.isControlDown() || e.isAltDown()) && e.getKeyCode() == KeyEvent.VK_ENTER) {
+                        e.consume();
+                        String currentText = multiLineEditField.getText();
+                        int caretPos = multiLineEditField.getCaretPosition();
+                        String beforeCursor = currentText.substring(0, caretPos);
+                        String afterCursor = currentText.substring(caretPos);
+
+                        multiLineEditField.setText(beforeCursor);
+                        rawText = beforeCursor;
+
+                        LineRow newRow = insertRowAfter(idx, afterCursor);
+                        stopEditing();
+                        SwingUtilities.invokeLater(() -> {
+                            newRow.startEditing();
+                            if (newRow.useMultiLine) {
+                                newRow.multiLineEditField.setCaretPosition(0);
+                            } else {
+                                newRow.singleLineEditField.setCaretPosition(0);
+                            }
+                        });
+                    } else if (e.getKeyCode() == KeyEvent.VK_BACK_SPACE
+                            && multiLineEditField.getText().isEmpty() && idx > 0) {
+                        e.consume();
+                        int prevIdx = idx - 1;
+                        String prevText = rows.get(prevIdx).getRawText();
+                        stopEditing();
+                        removeRow(idx);
+                        rows.get(prevIdx).startEditing();
+                        LineRow prevRow = rows.get(prevIdx);
+                        if (prevRow.useMultiLine) {
+                            prevRow.multiLineEditField.setCaretPosition(prevText.length());
+                        } else {
+                            prevRow.singleLineEditField.setCaretPosition(prevText.length());
+                        }
+                    } else if (e.getKeyCode() == KeyEvent.VK_ESCAPE) {
+                        stopEditing();
+                        e.consume();
+                    }
+                }
+
+                @Override
+                public void keyReleased(KeyEvent e) {
+                    rawText = multiLineEditField.getText();
+                    if (!rawText.trim().startsWith("```")) {
+                        useMultiLine = false;
+                        switchToSingleLine();
+                    } else {
+                        updateEditFieldHeight();
+                    }
                     notifyContentChanged();
                 }
             });
 
             panel.add(renderedPane, "RENDERED");
-            panel.add(scrollPane, "EDIT");
+            panel.add(singleLineEditField, "EDIT_SINGLE");
+            panel.add(multiLineScroll, "EDIT_MULTI");
 
             showCard("RENDERED");
+        }
+
+        private void switchToMultiLine() {
+            multiLineEditField.setText(rawText);
+            showCard("EDIT_MULTI");
+            multiLineEditField.requestFocusInWindow();
+            updateEditFieldHeight();
+        }
+
+        private void switchToSingleLine() {
+            singleLineEditField.setText(rawText);
+            showCard("EDIT_SINGLE");
+            singleLineEditField.requestFocusInWindow();
+            updateEditFieldHeight();
         }
 
         void startEditing() {
@@ -513,13 +614,23 @@ public class MarkdownEditorPanel {
                 return;
             }
             editing = true;
-            editField.setText(rawText);
-            showCard("EDIT");
-            editField.requestFocusInWindow();
-            SwingUtilities.invokeLater(() -> {
-                editField.setCaretPosition(editField.getText().length());
-                updateEditFieldHeight();
-            });
+            if (useMultiLine) {
+                multiLineEditField.setText(rawText);
+                showCard("EDIT_MULTI");
+                multiLineEditField.requestFocusInWindow();
+                SwingUtilities.invokeLater(() -> {
+                    multiLineEditField.setCaretPosition(multiLineEditField.getText().length());
+                    updateEditFieldHeight();
+                });
+            } else {
+                singleLineEditField.setText(rawText);
+                showCard("EDIT_SINGLE");
+                singleLineEditField.requestFocusInWindow();
+                SwingUtilities.invokeLater(() -> {
+                    singleLineEditField.setCaretPosition(singleLineEditField.getText().length());
+                    updateEditFieldHeight();
+                });
+            }
         }
 
         void stopEditing() {
@@ -527,18 +638,22 @@ public class MarkdownEditorPanel {
                 return;
             }
             editing = false;
-            rawText = editField.getText();
+            rawText = useMultiLine ? multiLineEditField.getText() : singleLineEditField.getText();
             updateRendered();
             showCard("RENDERED");
             notifyContentChanged();
         }
 
         private void updateEditFieldHeight() {
-            // Calculate height based on line count
-            java.awt.FontMetrics fm = editField.getFontMetrics(editField.getFont());
-            int lineHeight = fm.getHeight();
-            int lineCount = editField.getLineCount();
-            int height = Math.max(28, (lineCount * lineHeight) + 12); // 12 for padding
+            int height;
+            if (useMultiLine) {
+                java.awt.FontMetrics fm = multiLineEditField.getFontMetrics(multiLineEditField.getFont());
+                int lineHeight = fm.getHeight();
+                int lineCount = multiLineEditField.getLineCount();
+                height = Math.max(28, (lineCount * lineHeight) + 12);
+            } else {
+                height = 28;
+            }
 
             panel.setPreferredSize(new Dimension(0, height));
             linesPanel.revalidate();
@@ -547,7 +662,7 @@ public class MarkdownEditorPanel {
 
         String getRawText() {
             if (editing) {
-                return editField.getText();
+                return useMultiLine ? multiLineEditField.getText() : singleLineEditField.getText();
             }
             return rawText;
         }
@@ -557,26 +672,21 @@ public class MarkdownEditorPanel {
                 String bodyHtml = renderMarkdownLine(rawText);
                 String html = buildFullHtml(bodyHtml);
 
-                // Use StringReader with EditorKit for better rendering
                 java.io.StringReader reader = new java.io.StringReader(html);
                 renderedPane.read(reader, null);
 
-                // Force recalculation of preferred size
                 SwingUtilities.invokeLater(() -> {
-                    // Get parent width for proper wrapping
                     int width = linesPanel.getWidth();
                     if (width <= 0) {
-                        width = 600; // Default width
+                        width = 600;
                     }
 
                     renderedPane.setSize(width - 40, Integer.MAX_VALUE);
                     Dimension prefSize = renderedPane.getPreferredSize();
 
-                    // Count lines in raw text for better height estimation of code blocks
                     int lineCount = rawText.split("\n", -1).length;
                     int estimatedHeight = Math.max(28, prefSize.height);
 
-                    // For multi-line blocks, ensure minimum height
                     if (lineCount > 1) {
                         java.awt.FontMetrics fm = renderedPane.getFontMetrics(renderedPane.getFont());
                         int minHeight = (lineCount * fm.getHeight()) + 20;
